@@ -1,0 +1,17 @@
+{
+    "Database": {
+        "Host": "127.0.0.1",
+        "Port": 3306,
+        // created automatically if missing
+        "Database": "armory",
+        "User": "root",
+        "Password": ""
+    },
+    "Listener": {
+        // localhost-only HTTP listener the website uses to push live refreshes.
+        // leave Token empty to disable the listener entirely.
+        "Host": "127.0.0.1",
+        "Port": 27021,
+        "Token": ""
+    }
+}

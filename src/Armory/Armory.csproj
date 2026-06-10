@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<AssemblyName>Armory</AssemblyName>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+		<Version>1.0.0</Version>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Dapper" Version="2.1.66" />
+		<PackageReference Include="Iced" Version="1.21.0" />
+		<PackageReference Include="ModSharp.Sharp.Extensions.CommandManager" Version="2.1.106" />
+		<PackageReference Include="ModSharp.Sharp.Shared" Version="*" PrivateAssets="all" />
+		<PackageReference Include="MySqlConnector" Version="2.4.0" />
+	</ItemGroup>
+
+</Project>
