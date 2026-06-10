@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Dapper;
+using SqlSugar;
 
 namespace Armory.Data;
 
@@ -14,7 +14,9 @@ internal class InventoryRepository
         _database = database;
     }
 
-    // mutable classes (not positional records) so Dapper maps columns leniently by name
+    private SqlSugarScope Db => _database.Client;
+
+    // mutable classes so SqlSugar maps columns leniently by name
     private class WeaponSkinRow
     {
         public int     item_def     { get; set; }
@@ -43,17 +45,17 @@ internal class InventoryRepository
 
     public async Task<Inventory> GetInventory(ulong steamId)
     {
-        await using var db = _database.Open();
+        var parameters = new { steamId };
 
-        var weaponRows = await db.QueryAsync<WeaponSkinRow>(
+        var weaponRows = await Db.Ado.SqlQueryAsync<WeaponSkinRow>(
                              "SELECT item_def, paint_id, wear, seed, stattrak, name_tag, stickers, keychain, custom_model " +
-                             "FROM weapon_skins WHERE steam_id = @steamId", new { steamId });
+                             "FROM weapon_skins WHERE steam_id = @steamId", parameters);
 
-        var loadoutRows = await db.QueryAsync<LoadoutRow>(
-                              "SELECT team, slot, item_def FROM loadouts WHERE steam_id = @steamId", new { steamId });
+        var loadoutRows = await Db.Ado.SqlQueryAsync<LoadoutRow>(
+                              "SELECT team, slot, item_def FROM loadouts WHERE steam_id = @steamId", parameters);
 
-        var playerModelRows = await db.QueryAsync<PlayerModelRow>(
-                                  "SELECT team, model_path FROM player_models WHERE steam_id = @steamId", new { steamId });
+        var playerModelRows = await Db.Ado.SqlQueryAsync<PlayerModelRow>(
+                                  "SELECT team, model_path FROM player_models WHERE steam_id = @steamId", parameters);
 
         var weapons = new Dictionary<int, WeaponSkinInfo>();
 
@@ -91,25 +93,19 @@ internal class InventoryRepository
         };
     }
 
-    public async Task UpdateStatTrak(ulong steamId, int itemDef, int statTrak)
-    {
-        await using var db = _database.Open();
-
-        await db.ExecuteAsync(
+    public Task UpdateStatTrak(ulong steamId, int itemDef, int statTrak)
+        => Db.Ado.ExecuteCommandAsync(
             "UPDATE weapon_skins SET stattrak = @statTrak WHERE steam_id = @steamId AND item_def = @itemDef",
             new { steamId, itemDef, statTrak });
-    }
 
     /// <summary>Every model path the server may ever SetModel — used to build the precache set.</summary>
     public async Task<HashSet<string>> GetAllModelPaths()
     {
-        await using var db = _database.Open();
-
-        var paths = await db.QueryAsync<string>("""
-                                                SELECT model_path FROM precache_models
-                                                UNION SELECT model_path FROM player_models
-                                                UNION SELECT custom_model FROM weapon_skins WHERE custom_model IS NOT NULL
-                                                """);
+        var paths = await Db.Ado.SqlQueryAsync<string>("""
+                                                       SELECT model_path FROM precache_models
+                                                       UNION SELECT model_path FROM player_models
+                                                       UNION SELECT custom_model FROM weapon_skins WHERE custom_model IS NOT NULL
+                                                       """);
 
         return paths.Where(p => !string.IsNullOrWhiteSpace(p))
                     .Select(p => p.Trim())

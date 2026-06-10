@@ -1,11 +1,10 @@
 using System.Globalization;
 using System.Text.Json;
 using Armory.Data;
-using Dapper;
 using Microsoft.Extensions.Logging;
-using MySqlConnector;
 using Sharp.Shared.Enums;
 using Sharp.Shared.Types;
+using SqlSugar;
 
 namespace Armory.Modules;
 
@@ -18,17 +17,17 @@ internal class MigrationCommand : IArmoryService
     private const string CommandName = "armory_migrate";
 
     private readonly InterfaceBridge           _bridge;
-    private readonly ArmoryConfig              _config;
     private readonly Database                  _database;
     private readonly ILogger<MigrationCommand> _logger;
 
-    public MigrationCommand(InterfaceBridge bridge, ArmoryConfig config, Database database, ILogger<MigrationCommand> logger)
+    public MigrationCommand(InterfaceBridge bridge, Database database, ILogger<MigrationCommand> logger)
     {
         _bridge   = bridge;
-        _config   = config;
         _database = database;
         _logger   = logger;
     }
+
+    private SqlSugarScope Db => _database.Client;
 
     public bool Init()
     {
@@ -39,6 +38,11 @@ internal class MigrationCommand : IArmoryService
         return true;
     }
 
+    public void Shutdown()
+    {
+        _bridge.ConVarManager.ReleaseCommand(CommandName);
+    }
+
     /// <summary>First boot convenience: if armory is empty and the legacy DB exists, import it.</summary>
     private void AutoMigrateIfEmpty()
     {
@@ -46,9 +50,7 @@ internal class MigrationCommand : IArmoryService
         {
             try
             {
-                await using var dst = _database.Open();
-
-                var hasData = await dst.ExecuteScalarAsync<int>(
+                var hasData = await Db.Ado.SqlQuerySingleAsync<long>(
                                   "SELECT EXISTS(SELECT 1 FROM weapon_skins) " +
                                   "OR EXISTS(SELECT 1 FROM loadouts) " +
                                   "OR EXISTS(SELECT 1 FROM player_models)");
@@ -58,7 +60,7 @@ internal class MigrationCommand : IArmoryService
                     return;
                 }
 
-                var legacyExists = await dst.ExecuteScalarAsync<int>(
+                var legacyExists = await Db.Ado.SqlQuerySingleAsync<long>(
                                        "SELECT COUNT(*) FROM information_schema.tables " +
                                        "WHERE table_schema = 'weaponskin' AND table_name = 'ws_weapon_cosmetics'");
 
@@ -79,11 +81,6 @@ internal class MigrationCommand : IArmoryService
                 _logger.LogError(ex, "Auto-migration failed (run armory_migrate manually)");
             }
         });
-    }
-
-    public void Shutdown()
-    {
-        _bridge.ConVarManager.ReleaseCommand(CommandName);
     }
 
     private ECommandAction OnCommandMigrate(StringCommand command)
@@ -108,7 +105,7 @@ internal class MigrationCommand : IArmoryService
         return ECommandAction.Handled;
     }
 
-    // mutable class with loose types so Dapper can materialize whatever column types the legacy schema used
+    // mutable class with loose types so SqlSugar can materialize whatever column types the legacy schema used
     private class LegacyCosmetics
     {
         public long    SteamId        { get; set; }
@@ -128,21 +125,14 @@ internal class MigrationCommand : IArmoryService
 
     private async Task<Dictionary<string, int>> Migrate(string sourceDb)
     {
-        var source = new MySqlConnectionStringBuilder(_config.Database.ServerConnectionString)
-        {
-            Database = sourceDb,
-        }.ConnectionString;
-
-        await using var src = new MySqlConnection(source);
-        await using var dst = _database.Open();
-
+        // legacy database lives on the same MySQL server — read it fully qualified
         var counts = new Dictionary<string, int>();
 
         // weapon skins (sticker strings "id;schema;x;y;wear;scale;rotation" -> JSON)
-        var cosmetics = (await src.QueryAsync<LegacyCosmetics>(
+        var cosmetics = await Db.Ado.SqlQueryAsync<LegacyCosmetics>(
                             "SELECT SteamId, ItemId, PaintId, Wear, Seed, StatTrak, NameTag, " +
                             "WeaponSticker0, WeaponSticker1, WeaponSticker2, WeaponSticker3, WeaponSticker4, WeaponKeychain " +
-                            "FROM ws_weapon_cosmetics")).ToArray();
+                            $"FROM `{sourceDb}`.ws_weapon_cosmetics");
 
         foreach (var row in cosmetics)
         {
@@ -161,34 +151,34 @@ internal class MigrationCommand : IArmoryService
 
             var keychain = ParseLegacyKeychain(row.WeaponKeychain);
 
-            await dst.ExecuteAsync("""
-                                   INSERT INTO weapon_skins
-                                       (steam_id, item_def, paint_id, wear, seed, stattrak, name_tag, stickers, keychain)
-                                   VALUES (@SteamId, @ItemId, @PaintId, @Wear, @Seed, @StatTrak, @NameTag, @Stickers, @Keychain)
-                                   ON DUPLICATE KEY UPDATE
-                                       paint_id = VALUES(paint_id), wear = VALUES(wear), seed = VALUES(seed),
-                                       stattrak = VALUES(stattrak), name_tag = VALUES(name_tag),
-                                       stickers = VALUES(stickers), keychain = VALUES(keychain)
-                                   """,
-                                   new
-                                   {
-                                       row.SteamId,
-                                       row.ItemId,
-                                       row.PaintId,
-                                       row.Wear,
-                                       Seed     = (int) row.Seed,
-                                       row.StatTrak,
-                                       NameTag  = string.IsNullOrEmpty(row.NameTag) ? null : row.NameTag,
-                                       Stickers = stickers.Count > 0 ? JsonSerializer.Serialize(stickers) : null,
-                                       Keychain = keychain is not null ? JsonSerializer.Serialize(keychain) : null,
-                                   });
+            await Db.Ado.ExecuteCommandAsync("""
+                                             INSERT INTO weapon_skins
+                                                 (steam_id, item_def, paint_id, wear, seed, stattrak, name_tag, stickers, keychain)
+                                             VALUES (@SteamId, @ItemId, @PaintId, @Wear, @Seed, @StatTrak, @NameTag, @Stickers, @Keychain)
+                                             ON DUPLICATE KEY UPDATE
+                                                 paint_id = VALUES(paint_id), wear = VALUES(wear), seed = VALUES(seed),
+                                                 stattrak = VALUES(stattrak), name_tag = VALUES(name_tag),
+                                                 stickers = VALUES(stickers), keychain = VALUES(keychain)
+                                             """,
+                                             new
+                                             {
+                                                 row.SteamId,
+                                                 row.ItemId,
+                                                 row.PaintId,
+                                                 row.Wear,
+                                                 Seed     = (int) row.Seed,
+                                                 row.StatTrak,
+                                                 NameTag  = string.IsNullOrEmpty(row.NameTag) ? null : row.NameTag,
+                                                 Stickers = stickers.Count > 0 ? JsonSerializer.Serialize(stickers) : null,
+                                                 Keychain = keychain is not null ? JsonSerializer.Serialize(keychain) : null,
+                                             });
         }
 
-        counts["weapon_skins"] = cosmetics.Length;
+        counts["weapon_skins"] = cosmetics.Count;
 
         // custom weapon models -> weapon_skins.custom_model
         // (ODKU references source columns directly — VALUES() in INSERT...SELECT is rejected by MySQL 8 in some forms)
-        counts["custom_weapon_models"] = await dst.ExecuteAsync($"""
+        counts["custom_weapon_models"] = await Db.Ado.ExecuteCommandAsync($"""
             INSERT INTO weapon_skins (steam_id, item_def, custom_model)
             SELECT src.SteamId, src.ItemId, src.ModelPath FROM `{sourceDb}`.ws_custom_models src
             ON DUPLICATE KEY UPDATE custom_model = src.ModelPath
@@ -206,7 +196,7 @@ internal class MigrationCommand : IArmoryService
 
         foreach (var (table, slot) in loadoutSources)
         {
-            counts[slot] = await dst.ExecuteAsync($"""
+            counts[slot] = await Db.Ado.ExecuteCommandAsync($"""
                 INSERT INTO loadouts (steam_id, team, slot, item_def)
                 SELECT src.SteamId, src.Team, '{slot}', src.ItemId FROM `{sourceDb}`.{table} src
                 ON DUPLICATE KEY UPDATE item_def = src.ItemId
@@ -218,7 +208,7 @@ internal class MigrationCommand : IArmoryService
 
         foreach (var team in (int[]) [2, 3])
         {
-            counts["player_models"] += await dst.ExecuteAsync($"""
+            counts["player_models"] += await Db.Ado.ExecuteCommandAsync($"""
                 INSERT INTO player_models (steam_id, team, model_path)
                 SELECT src.SteamId, {team}, src.ModelPath FROM `{sourceDb}`.ws_custom_player_models src
                 ON DUPLICATE KEY UPDATE model_path = src.ModelPath

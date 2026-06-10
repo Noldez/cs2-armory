@@ -12,8 +12,8 @@ live sync.
 | | Old (WeaponSkin) | Armory |
 |---|---|---|
 | Assemblies | 3 (Core + Request.Sql + Shared) | **1 module** |
-| ORM | SqlSugar (code-first magic) | **Dapper + MySqlConnector** (explicit SQL) |
-| DB tables | 9 `ws_*` tables, sticker data packed into `"0;0;0;0;0;0;0"` strings | **5 tables**, stickers/keychain as JSON columns |
+| Data access | SqlSugar code-first entities spread over 3 assemblies | SqlSugar (`SqlSugarCoreNoDrive` + MySqlConnector) with explicit SQL in one repository |
+| DB tables | 9 `ws_*` tables, sticker data packed into `"0;0;0;0;0;0;0"` strings | **4 tables**, stickers/keychain as JSON columns |
 | Sync | type `ws_refresh` in game | **website pushes HTTP refresh** — change applies on next spawn automatically |
 | Precache | hand-edited `custom_models.json`; forgetting it = `SetModel` **crashes the server** | precache set built from the DB automatically; every `SetModel` goes through a guard that refuses un-precached models |
 
