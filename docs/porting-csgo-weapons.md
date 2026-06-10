@@ -31,7 +31,13 @@ Reverse-engineered from the working `ramen_m4a4_ag2.vmdl_c` (VRF `-b DATA` / `-b
    not from the model. No `AnimGraph2List` needed for weapons.
 3. **An animation block.** The model must contain at least one sequence or the server
    **crashes with an access violation** the moment the weapon spawns (see post-mortem
-   below). One `EmptyAnim` node is enough.
+   below). One `EmptyAnim` node is enough to not crash — **but** stock weapon models
+   embed five sequences (`dropped`, `reload`, `shoot`, `inventory_inspect`,
+   `inventory_icon`) and the **muzzle flash / shell casing / mag-eject effects live as
+   anim events on them** (learned 2026-06-10, Miku MP7). With only `EmptyAnim` the gun
+   fires with no muzzle flash, ejects no shells, drops no mag. For full effects author
+   `AnimFile` nodes (+`AnimEvent` children) instead — see "Restoring weapon effects"
+   below.
 4. **Physics bound to a bone.** `PhysicsHullFromRender` with `parent_bone = "weapon"`.
    An unbound hull (no `parent_bone`) compiles fine but is the other structural
    difference vs. ramen in the crash post-mortem.
@@ -170,6 +176,30 @@ no material import:
 5. Compile + run the full verification checklist below, **including the RERL check**.
 
 Template: `content/csgo/weapons/zed/miku_mp7/miku_mp7.vmdl`. Workdir: `D:\tools\miku_mp7_port\`.
+
+### Restoring weapon effects (muzzle flash, shells, mag eject)
+
+Stock worldmodels carry their fire/reload effects as **anim events inside the model**,
+not in vdata. Dump the stock (or donor) model's ANIM block to see them
+(`-b ANIM`, look at `m_eventArray` per sequence). For the MP7:
+
+- `shoot` (25f): `AE_CL_CREATE_PARTICLE_EFFECT_CFG` ×2 at frame 0 —
+  `uweapon_muzzleflash_subm.vpcf` with `config = "thirdperson"`, and
+  `weapon_shell_casing_9mm.vpcf` with `config = "shell_eject"` (config = the
+  attachment).
+- `reload` (95f): `AE_CL_EJECT_MAG` at frame 14, no event data.
+- `dropped` / `inventory_inspect` / `inventory_icon`: static poses, no events.
+
+To restore: VRF's `-d` decompile of the donor model dumps each sequence as a DMX
+(`shoot.dmx`, `reload.dmx`, ...). Reference them with `AnimFile` nodes
+(`source_filename`, `looping = true` for `dropped`) and add `AnimEvent` children
+(`event_class`, `event_frame`, `event_keys = { name = resource:"....vpcf",
+config = "..." }`). Working example: `content/csgo/weapons/zed/miku_mp7/miku_mp7.vmdl`.
+Verify with `-b ANIM`: frame counts and both particle events present.
+
+**Known gap:** `ak_ea` and `awp_200iq_fixed` were built with `EmptyAnim` only — they
+have no muzzle flash/shell effects. Fix the same way if it bothers anyone (donor DMX:
+decompile the *stock* ak47/awp models).
 
 ### Diagnosing "is it the model?" from crash dumps
 
