@@ -104,12 +104,15 @@ resourcecompiler.exe -game csgo -i content\csgo\weapons\noldez\ak_ea\ak_ea.vmdl
 Compiles the model **and** the referenced vmats/textures in one pass. Verify with VRF:
 
 - `-b DATA`: bone names/positions match stock exactly; `weapon_metadata` present.
+- `-b RERL`: **must reference `animation/skeletons/weapons/<gun>.vnmskel`** — a weapon
+  model without it crashes client+server on spawn (Miku MP7 post-mortem).
 - Block list **must contain ANIM, ASEQ, AGRP and PHYS** — compare against ramen
   (`ANIM` 589 bytes there). Missing ANIM/AGRP ⇒ crash on spawn.
 - `-b PHYS`: `m_boneNames = ["weapon"]`, `m_boneParents = [0]`.
 - Visual: VRF glb export (`-d --gltf_export_format glb --gltf_export_materials`) +
-  the Blender render script. Note VRF's glb export drops skinning — fine for renders,
-  useless for rigging (which is why step 2 edits the DMX directly).
+  the Blender render script. Note VRF's glb export drops skinning unless you also pass
+  `--gltf_export_animations` — fine for renders either way (which is why step 2 edits
+  the DMX directly).
 
 ### 5. Install + register
 
@@ -139,6 +142,46 @@ bone binding against a known-working model of the same class before testing in g
 (Also: `PhysicsHullFile` referencing the render mesh DMX silently produces **no** PHYS
 block at all. Valid ModelDoc node classes can be found by grepping strings in
 `game/bin/win64/tools/modeldoc_editor.dll`.)
+
+## Rebuilding a broken vpkmod model (Miku MP7 case, 2026-06-10)
+
+ZombieDen `phase2/...` vpkmod vmdls with no `NmSkeletonList` crash on spawn (see
+[models-and-precache.md](models-and-precache.md) § vpkmod warning). Rebuilding one is a
+**much shorter** version of the pipeline above because the mesh is already Source 2 and
+already skinned to the stock CS2 weapon skeleton — no `cs_mdl_import`, no retargeting,
+no material import:
+
+1. **Decompile**: `Source2Viewer-CLI -i broken.vmdl_c -o <workdir> -d`. The dumped
+   `*_body_legacy.dmx` keeps full skinning (`blendindices$0`/`blendweights$0`, verify
+   via `dmxconvert -oe keyvalues2`) and the DmeJoint tree — it feeds `resourcecompiler`
+   directly as a `RenderMeshFile`. (Contrast: VRF's **glb** export needs
+   `--gltf_export_animations` or skinning is dropped; the DMX export keeps it always.)
+2. **Verify the skeleton is stock**: VRF `-b DATA` on the broken model vs. the stock
+   gun — bone names/positions matched exactly for the MP7, so the DMX needed zero edits.
+3. **Write a fresh vmdl** from the AK_EA template: stock skeleton bones, stock MDAT
+   attachments (quat→angles), `RenderMeshFile` → the dumped DMX, `EmptyAnim`,
+   `PhysicsHullFromRender parent_bone="weapon"`,
+   `NmSkeletonList → animation/skeletons/weapons/mp7.vnmskel`, `GameDataList` with the
+   `weapon_metadata` copied from the broken model's own DATA block (it carries the
+   correct holster/magazine/fire-sequence values).
+4. **Materials need nothing**: the DMX's `mtlName` keeps pointing at the vpkmod's
+   compiled-only `vmat_c` (here `jiye/miku_mp7/materials/miku_mp7.vmat`) — compiled-only
+   material paths resolve fine at runtime (Reimu/AWP-fix precedent).
+5. Compile + run the full verification checklist below, **including the RERL check**.
+
+Template: `content/csgo/weapons/zed/miku_mp7/miku_mp7.vmdl`. Workdir: `D:\tools\miku_mp7_port\`.
+
+### Diagnosing "is it the model?" from crash dumps
+
+CS2 writes `cs2_*_accessviolation.mdmp` minidumps to `game/bin/win64/`.
+`D:\tools\miku_mp7_port\minidump_info.py` (pure Python, runs under Blender's python:
+`blender -b --factory-startup --python minidump_info.py -- <dumps...>`) prints the
+exception code/address and the faulting module+offset. The malformed-model signature is a
+**deterministic pair**: the same `client.dll+offset` null read on every affected client
+and the same `server.dll+offset` null read on the server (same engine anim/model code
+compiled into both binaries). Identical offsets across crashes hours apart = same root
+cause, even across different maps/models — useful for telling "this model is broken"
+apart from map or plugin crashes.
 
 ## Tool notes
 

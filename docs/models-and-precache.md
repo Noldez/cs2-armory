@@ -63,3 +63,24 @@ then an 8-byte size + an **embedded standard VPK** (magic `34 12 AA 55`).
 Decode the LZ4 frame, scan for the VPK magic, dump from there, then extract with
 Source 2 Viewer CLI. Files named `*.vdata_c.patch` inside are for ZombieDen's custom
 loader and are useless on a stock/ModSharp server — only the model/material files matter.
+
+### WARNING: `phase2/...` vpkmod models crash vanilla CS2 (learned 2026-06-10)
+
+ZombieDen's loader uses a two-part "phase2" system: per-weapon **base models** at
+`phase2/weapons/models/<gun>/weapon_*_ag2.vmdl` (shipped by their loader, vdata-patched
+over the stock model) and skin vmdls at author paths that *reference* them — the working
+Neco Deagle's RERL lists `phase2/weapons/models/deagle/weapon_pist_deagle_ag2.vmdl` plus
+`animation/skeletons/weapons/deagle.vnmskel`.
+
+Some vpkmods (e.g. the ZED Miku MP7) instead ship a **self-contained vmdl at the phase2
+path itself** with embedded mesh/anim/phys but **no `NmSkeletonList` / `.vnmskel`
+reference at all**. Applied via `SetModel` on a vanilla+ModSharp server, that model
+**crashes both client and server** with a null-read access violation the moment the
+weapon spawns (same failure class as the AK_EA first-compile post-mortem). Precaching
+succeeds; the crash happens when the unified weapon anim system touches the model.
+
+**Rule: check the RERL of every vpkmod weapon vmdl before installing**
+(`Source2Viewer-CLI -i x.vmdl_c -b RERL`). No `animation/skeletons/weapons/*.vnmskel`
+reference ⇒ do **not** install it as-is — rebuild it with the recipe in
+[porting-csgo-weapons.md](porting-csgo-weapons.md) § "Rebuilding a broken vpkmod model".
+The rebuild is cheap: these meshes are already skinned to the stock CS2 skeleton.

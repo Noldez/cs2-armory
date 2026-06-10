@@ -63,6 +63,7 @@ public class Armory : IModSharpModule
         services.AddSingleton<IArmoryService, MusicKits>();
         services.AddSingleton<IArmoryService, Medals>();
         services.AddSingleton<IArmoryService, PlayerModels>();
+        services.AddSingleton<IArmoryService, Shop>();
         services.AddSingleton<IArmoryService, MigrationCommand>();
         services.AddSingleton<IArmoryService, RefreshServer>();
 
