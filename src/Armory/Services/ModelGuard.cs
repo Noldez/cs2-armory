@@ -66,6 +66,17 @@ internal class ModelGuard : IModelGuard, IArmoryService, IGameListener
 
     public void OnResourcePrecache()
     {
+        // re-read at every map load so rows added since boot (or by a migration that
+        // finished after Init) are picked up; fall back to the last known set on failure
+        try
+        {
+            _wanted = _repository.GetAllModelPaths().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not refresh precache set from database, using previous set");
+        }
+
         var precached = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var model in _wanted)

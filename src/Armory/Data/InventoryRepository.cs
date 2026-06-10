@@ -14,18 +14,32 @@ internal class InventoryRepository
         _database = database;
     }
 
-    private record WeaponSkinRow(
-        long    item_def,
-        ushort  paint_id,
-        float   wear,
-        int     seed,
-        int?    stattrak,
-        string? name_tag,
-        string? stickers,
-        string? keychain,
-        string? custom_model);
+    // mutable classes (not positional records) so Dapper maps columns leniently by name
+    private class WeaponSkinRow
+    {
+        public int     item_def     { get; set; }
+        public int     paint_id     { get; set; }
+        public float   wear         { get; set; }
+        public int     seed         { get; set; }
+        public int?    stattrak     { get; set; }
+        public string? name_tag     { get; set; }
+        public string? stickers     { get; set; }
+        public string? keychain     { get; set; }
+        public string? custom_model { get; set; }
+    }
 
-    private record LoadoutRow(int team, string slot, int item_def);
+    private class LoadoutRow
+    {
+        public int    team     { get; set; }
+        public string slot     { get; set; } = string.Empty;
+        public int    item_def { get; set; }
+    }
+
+    private class PlayerModelRow
+    {
+        public int    team       { get; set; }
+        public string model_path { get; set; } = string.Empty;
+    }
 
     public async Task<Inventory> GetInventory(ulong steamId)
     {
@@ -38,17 +52,17 @@ internal class InventoryRepository
         var loadoutRows = await db.QueryAsync<LoadoutRow>(
                               "SELECT team, slot, item_def FROM loadouts WHERE steam_id = @steamId", new { steamId });
 
-        var playerModelRows = await db.QueryAsync<(int team, string model_path)>(
+        var playerModelRows = await db.QueryAsync<PlayerModelRow>(
                                   "SELECT team, model_path FROM player_models WHERE steam_id = @steamId", new { steamId });
 
         var weapons = new Dictionary<int, WeaponSkinInfo>();
 
         foreach (var row in weaponRows)
         {
-            weapons[(int) row.item_def] = new WeaponSkinInfo
+            weapons[row.item_def] = new WeaponSkinInfo
             {
-                ItemDef     = (int) row.item_def,
-                PaintId     = row.paint_id,
+                ItemDef     = row.item_def,
+                PaintId     = (ushort) row.paint_id,
                 Wear        = row.wear,
                 Seed        = row.seed,
                 StatTrak    = row.stattrak,

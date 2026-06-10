@@ -108,20 +108,23 @@ internal class MigrationCommand : IArmoryService
         return ECommandAction.Handled;
     }
 
-    private record LegacyCosmetics(
-        ulong   SteamId,
-        int     ItemId,
-        ushort  PaintId,
-        float   Wear,
-        float   Seed,
-        int?    StatTrak,
-        string? NameTag,
-        string  WeaponSticker0,
-        string  WeaponSticker1,
-        string  WeaponSticker2,
-        string  WeaponSticker3,
-        string  WeaponSticker4,
-        string  WeaponKeychain);
+    // mutable class with loose types so Dapper can materialize whatever column types the legacy schema used
+    private class LegacyCosmetics
+    {
+        public long    SteamId        { get; set; }
+        public int     ItemId         { get; set; }
+        public int     PaintId        { get; set; }
+        public float   Wear           { get; set; }
+        public float   Seed           { get; set; }
+        public int?    StatTrak       { get; set; }
+        public string? NameTag        { get; set; }
+        public string? WeaponSticker0 { get; set; }
+        public string? WeaponSticker1 { get; set; }
+        public string? WeaponSticker2 { get; set; }
+        public string? WeaponSticker3 { get; set; }
+        public string? WeaponSticker4 { get; set; }
+        public string? WeaponKeychain { get; set; }
+    }
 
     private async Task<Dictionary<string, int>> Migrate(string sourceDb)
     {
@@ -143,7 +146,7 @@ internal class MigrationCommand : IArmoryService
 
         foreach (var row in cosmetics)
         {
-            string[] stickerColumns =
+            string?[] stickerColumns =
                 [row.WeaponSticker0, row.WeaponSticker1, row.WeaponSticker2, row.WeaponSticker3, row.WeaponSticker4];
 
             var stickers = new List<StickerInfo>();
@@ -184,10 +187,11 @@ internal class MigrationCommand : IArmoryService
         counts["weapon_skins"] = cosmetics.Length;
 
         // custom weapon models -> weapon_skins.custom_model
+        // (ODKU references source columns directly — VALUES() in INSERT...SELECT is rejected by MySQL 8 in some forms)
         counts["custom_weapon_models"] = await dst.ExecuteAsync($"""
             INSERT INTO weapon_skins (steam_id, item_def, custom_model)
-            SELECT SteamId, ItemId, ModelPath FROM `{sourceDb}`.ws_custom_models
-            ON DUPLICATE KEY UPDATE custom_model = VALUES(custom_model)
+            SELECT src.SteamId, src.ItemId, src.ModelPath FROM `{sourceDb}`.ws_custom_models src
+            ON DUPLICATE KEY UPDATE custom_model = src.ModelPath
             """);
 
         // team loadouts
@@ -204,19 +208,22 @@ internal class MigrationCommand : IArmoryService
         {
             counts[slot] = await dst.ExecuteAsync($"""
                 INSERT INTO loadouts (steam_id, team, slot, item_def)
-                SELECT SteamId, Team, '{slot}', ItemId FROM `{sourceDb}`.{table}
-                ON DUPLICATE KEY UPDATE item_def = VALUES(item_def)
+                SELECT src.SteamId, src.Team, '{slot}', src.ItemId FROM `{sourceDb}`.{table} src
+                ON DUPLICATE KEY UPDATE item_def = src.ItemId
                 """);
         }
 
         // full player models (legacy rows are team-less -> apply to both T and CT)
-        counts["player_models"] = await dst.ExecuteAsync($"""
-            INSERT INTO player_models (steam_id, team, model_path)
-            SELECT SteamId, t.team, ModelPath
-            FROM `{sourceDb}`.ws_custom_player_models
-            CROSS JOIN (SELECT 2 AS team UNION ALL SELECT 3) t
-            ON DUPLICATE KEY UPDATE model_path = VALUES(model_path)
-            """);
+        counts["player_models"] = 0;
+
+        foreach (var team in (int[]) [2, 3])
+        {
+            counts["player_models"] += await dst.ExecuteAsync($"""
+                INSERT INTO player_models (steam_id, team, model_path)
+                SELECT src.SteamId, {team}, src.ModelPath FROM `{sourceDb}`.ws_custom_player_models src
+                ON DUPLICATE KEY UPDATE model_path = src.ModelPath
+                """);
+        }
 
         return counts;
     }
